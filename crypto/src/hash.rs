@@ -1,6 +1,6 @@
 //! Various hash functions
 
-use digest::Digest;
+use sha2::{Digest};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -31,8 +31,8 @@ impl AsRef<[u8]> for Sha256 {
 /// Calculate the SHA256 hash
 pub fn calculate_sha256(bytes: &[u8]) -> Sha256 {
     let mut hasher = sha2::Sha256::new();
-    hasher.input(bytes);
+    hasher.update(bytes);
     let mut hash = [0; 32];
-    hash.copy_from_slice(&hasher.result());
+    hash.copy_from_slice(sha2::Sha256::digest(&bytes).as_ref());
     Sha256(hash)
 }

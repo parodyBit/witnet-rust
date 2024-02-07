@@ -124,10 +124,10 @@ where
         }
 
         let key_bytes = self.key;
-        let mut mac = Hmac::<sha2::Sha512>::new_varkey(key_bytes)
+        let mut mac = Hmac::<sha2::Sha512>::new_from_slice(key_bytes)
             .map_err(|_| MasterKeyGenError::InvalidKeyLength)?;
-        mac.input(seed_bytes);
-        let result = mac.result().code();
+        mac.update(seed_bytes);
+        let result = mac.finalize().into_bytes();
         let (sk_bytes, chain_code_bytes) = result.split_at(32);
 
         // secret/chain_code computation might panic if length returned by hmac is wrong
@@ -281,26 +281,26 @@ impl ExtendedSK {
         for index in path.iter() {
             extended_sk = extended_sk.child(index)?
         }
-
         Ok(extended_sk)
     }
 
     /// Try to get a private child key from parent
     pub fn child(&self, index: &KeyPathIndex) -> Result<ExtendedSK, KeyDerivationError> {
         let mut hmac512: Hmac<sha2::Sha512> =
-            Hmac::new_varkey(&self.chain_code).map_err(|_| KeyDerivationError::InvalidKeyLength)?;
+            Hmac::new_from_slice(&self.chain_code.as_ref()).map_err(|_| KeyDerivationError::InvalidKeyLength)?;
         let index_bytes = index.as_ref().to_be_bytes();
-
         if index.is_hardened() {
-            hmac512.input(&[0]); // BIP-32 padding that makes key 33 bytes long
-            hmac512.input(&self.secret_key[..]);
+            hmac512.update(&[0u8]); // BIP-32 padding that makes key 33 bytes long
+            hmac512.update(&self.secret_key[..]);
         } else {
-            hmac512.input(&PublicKey::from_secret_key_global(&self.secret_key).serialize());
+            hmac512.update(&PublicKey::from_secret_key_global(&self.secret_key).serialize().as_ref());
         }
 
-        let (chain_code, secret_key) = get_chain_code_and_secret(&index_bytes, hmac512)?;
+        hmac512.update(&index_bytes.as_ref());
 
-        secret_key
+        let (chain_code, mut secret_key) = get_chain_code_and_secret(&hmac512)?;
+
+        secret_key = self.secret_key
             .add_tweak(&Scalar::from(secret_key))
             .map_err(KeyDerivationError::Secp256k1Error)?;
 
@@ -458,11 +458,10 @@ impl From<Vec<u32>> for KeyPath {
 
 #[inline]
 fn get_chain_code_and_secret(
-    seed: &[u8],
-    mut hmac512: Hmac<sha2::Sha512>,
+    hmac512: &Hmac<sha2::Sha512>,
 ) -> Result<(Protected, SecretKey), KeyDerivationError> {
-    hmac512.input(seed);
-    let i = hmac512.result().code();
+    let binding = &hmac512.clone().finalize().into_bytes();
+    let i = binding.iter().as_slice();
     let (il, ir) = i.split_at(32);
     let chain_code = Protected::from(ir);
     let secret_key = SecretKey::from_slice(il).map_err(KeyDerivationError::Secp256k1Error)?;
@@ -530,11 +529,11 @@ mod tests {
 
         let master_key = MasterKeyGen::new(&seed[..]).generate().unwrap();
 
-        let expected_secret_key = [
+        let expected_secret_key:[u8; 32] = [
             79, 67, 227, 208, 107, 229, 51, 169, 104, 61, 121, 142, 8, 143, 75, 74, 235, 179, 67,
             213, 108, 252, 255, 16, 32, 162, 57, 21, 195, 162, 115, 128,
         ];
-        assert_eq!(expected_secret_key, &master_key.secret_key[..]);
+        assert_eq!(expected_secret_key, *master_key.secret_key.as_ref());
     }
 
     #[test]
@@ -555,7 +554,7 @@ mod tests {
             .index(0); // address: 0
         let account = extended_sk.derive(&path).unwrap();
 
-        let expected_account = [
+        let expected_account:[u8; 32] = [
             137, 174, 230, 121, 4, 190, 53, 238, 47, 181, 52, 226, 109, 68, 153, 170, 112, 150, 84,
             84, 26, 177, 194, 157, 76, 80, 136, 25, 6, 79, 247, 43,
         ];
@@ -575,7 +574,7 @@ mod tests {
         let master_key = MasterKeyGen::new(&seed).generate().unwrap();
 
         for (expected, keypath) in slip32_vectors() {
-            let key = master_key.derive(&keypath).unwrap();
+            let key = &master_key.derive(&keypath).unwrap();
             let xprv = key.to_slip32(&keypath).unwrap();
 
             assert_eq!(expected, xprv);
@@ -583,7 +582,7 @@ mod tests {
             let (recovered_key, path) = ExtendedSK::from_slip32(&xprv).unwrap();
 
             assert_eq!(keypath, path);
-            assert_eq!(key, recovered_key);
+            assert_eq!(key, &recovered_key);
         }
     }
 }
