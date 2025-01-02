@@ -2046,9 +2046,12 @@ pub async fn stake(params: Result<BuildStakeParams, Error>) -> JsonRpcResult {
     let msg = withdrawer.as_secp256k1_msg();
 
     let authorization = params
-        .authorization
-        .try_do_magic(|hex_str| KeyedSignature::from_recoverable_hex(&hex_str, &msg))
-        .map_err(internal_error)?;
+        .authorization.try_do_magic(|hex_str| {
+        KeyedSignature::from_recoverable_hex(
+            &hex_str[hex_str.char_indices().nth_back(129).unwrap().0..],
+            &msg,
+        )
+    });
     let validator = PublicKeyHash::from_public_key(&authorization.public_key);
     log::debug!(
         "[STAKE] A stake authorization was provided, and it was signed by validator {}",

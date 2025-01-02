@@ -951,6 +951,7 @@ pub fn send_st(
                     dry_run: true,
                     ..build_stake_params.clone()
                 };
+                log::debug!("[SEND STAKE 1]: {}", dry_params.clone().value);
                 let (bsr, ..): (BuildStakeResponse, _) =
                     issue_method("stake", Some(dry_params), &mut stream, id.next())?;
                 let dry_weight = bsr.transaction.weight();
@@ -975,6 +976,7 @@ pub fn send_st(
         dry_run: true,
         ..build_stake_params.clone()
     };
+    log::debug!("[SEND STAKE 2]: {}", params.clone().value);
     let (dry, _): (BuildStakeResponse, _) =
         issue_method("stake", Some(params), &mut stream, id.next())?;
 
@@ -1039,8 +1041,23 @@ pub fn authorize_st(addr: SocketAddr, withdrawer: Option<String>) -> Result<(), 
 
     let message = authorization.withdrawer.as_secp256k1_msg();
 
-    let auth_bytes = authorization.signature.to_recoverable_bytes(&message)?;
-    let auth_string = hex::encode(auth_bytes);
+    // let validator_bytes: [u8; 20] = authorization.signature.public_key.pkh().as_ref().try_into()?;
+    // let signature_bytes: [u8; 65] = authorization.signature.to_recoverable_bytes(&message).unwrap();
+    // let auth_string: String = hex::encode([&validator_bytes[..], &signature_bytes[..]].concat());
+
+    let auth_string = {
+        let validator_bytes: [u8; 20] = authorization
+            .signature
+            .public_key
+            .pkh()
+            .as_ref()
+            .try_into()?;
+        let signature_bytes: [u8; 65] = authorization
+            .signature
+            .to_recoverable_bytes(&message)
+            .unwrap();
+        hex::encode([&validator_bytes[..], &signature_bytes[..]].concat())
+    };
 
     let auth_qr = qrcode::QrCode::new(&auth_string)?;
     let auth_ascii = auth_qr
